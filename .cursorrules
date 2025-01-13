@@ -1,0 +1,4 @@
+Add detaild debug logs to the code for all the steps that are happening.
+At first start with simple logs and then add more detaild logs if i report errors and not working.
+Generate simple if possible one sentence git commit messages for all the changes you make.
+Always use default browser profile configuration.

@@ -1,0 +1,6 @@
+pydantic>=2.5.0
+playwright>=1.40.0
+python-dotenv>=1.0.0
+asyncio>=3.4.3
+langchain-google-genai>=0.0.5
+browser-use
