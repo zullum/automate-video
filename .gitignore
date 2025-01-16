@@ -1,5 +1,20 @@
-.env
+# Python
 __pycache__/
-*.pyc
-.DS_Store 
+*.py[cod]
+*$py.class
+.env
 .venv/
+venv/
+
+# Audio files and output
+audio_output/
+*.wav
+*.mp3
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/

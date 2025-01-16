@@ -4,3 +4,9 @@ python-dotenv>=1.0.0
 asyncio>=3.4.3
 langchain-google-genai>=0.0.5
 browser-use
+openai-whisper>=20231117
+sounddevice>=0.4.6
+scipy>=1.11.4
+numpy>=1.26.3
+soundfile>=0.12.1
+ffmpeg-python>=0.2.0
