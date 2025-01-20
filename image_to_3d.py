@@ -6,6 +6,7 @@ import os
 import logging
 import PIL.Image
 import warnings
+import subprocess
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=FutureWarning, module='timm')
@@ -233,33 +234,55 @@ def create_edge_falloff(shape, falloff_strength=0.3):
 # 4) GENERATE A LOOPING ANIMATION
 def generate_3d_parallax_animation(
     input_image_path,
-    output_gif_path="parallax.gif",
+    output_path="parallax.gif",
     frames=60,
-    amplitude=35,    # Slightly reduced amplitude
-    strength=0.7,    # Increased strength for more pronounced effect
-    fps=30,
+    amplitude=35,
+    strength=0.7,
+    fps=60,
     model_type="DPT_Large",
+    output_format="gif",
+    output_width=None,
+    output_height=None
 ):
     """
     Generates a looping parallax animation from a single image.
+    
+    Args:
+        output_format: Either 'gif' or 'mp4'. MP4 provides better quality.
+        output_width: Desired output width (optional, defaults to original image width)
+        output_height: Desired output height (optional, defaults to original image height)
     """
+    logger.info(f"Generating 3D parallax animation in {output_format.upper()} format")
+    
     # Load image and setup
     image_bgr = cv2.imread(input_image_path)
     if image_bgr is None:
         raise FileNotFoundError(f"Could not read image {input_image_path}")
+    
+    # Get original dimensions
+    orig_height, orig_width = image_bgr.shape[:2]
+    
+    # Set output dimensions
+    if output_width is None:
+        output_width = orig_width
+    if output_height is None:
+        output_height = orig_height
+        
+    # Resize input image if output dimensions are different
+    if (output_width != orig_width) or (output_height != orig_height):
+        image_bgr = cv2.resize(image_bgr, (output_width, output_height), interpolation=cv2.INTER_LANCZOS4)
+        logger.info(f"Resized input image from {orig_width}x{orig_height} to {output_width}x{output_height}")
     
     # Load MiDaS model
     midas, transform = load_midas(model_type)
     
     # Estimate depth
     depth = estimate_depth(image_bgr, midas, transform)
-    
-    # Process depth map for better foreground/background separation
     depth = process_depth_map(depth)
     
     # Setup animation parameters
     height, width = image_bgr.shape[:2]
-    max_scale = 1.15  # Slightly reduced max scale
+    max_scale = 1.15
     max_height = int(height * max_scale)
     max_width = int(width * max_scale)
     pad_frame = np.zeros((max_height, max_width, 3), dtype=np.uint8)
@@ -272,10 +295,10 @@ def generate_3d_parallax_animation(
         
         # Smooth movement patterns
         shift_x = amplitude * np.sin(angle)
-        shift_y = amplitude * 0.15 * np.sin(angle * 1.5)  # Further reduced vertical movement
+        shift_y = amplitude * 0.15 * np.sin(angle * 1.5)
         
         # Gentler zoom effect
-        zoom_factor = 0.06  # Reduced zoom range
+        zoom_factor = 0.06
         scale = 1.0 + zoom_factor * (1 + np.cos(angle)) / 2
         
         # Warp image with improved depth handling
@@ -297,30 +320,168 @@ def generate_3d_parallax_animation(
         start_x = (max_width - width) // 2
         frame = frame[start_y:start_y+height, start_x:start_x+width]
         
-        # Convert to RGB and append
+        # Convert to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frames_list.append(frame_rgb)
         
         if i % 10 == 0:
             logger.debug(f"Generated frame {i+1}/{frames}")
     
-    logger.info("Saving animation...")
-    imageio.mimsave(
-        output_gif_path, 
-        frames_list, 
-        fps=fps,
-        optimize=True,
-        subrectangles=True
-    )
-    logger.info(f"Animation saved to {output_gif_path}")
+    logger.info(f"Saving animation in {output_format.upper()} format...")
+    
+    if output_format.lower() == 'mp4':
+        # Save as MP4 with high quality settings
+        output_path = output_path.rsplit('.', 1)[0] + '.mp4'
+        temp_frames_dir = "temp_frames"
+        os.makedirs(temp_frames_dir, exist_ok=True)
+        
+        try:
+            # Save frames as high-quality PNG files
+            for i, frame in enumerate(frames_list):
+                frame_path = os.path.join(temp_frames_dir, f"frame_{i:04d}.png")
+                PIL.Image.fromarray(frame).save(frame_path, quality=100)
+            
+            # Use FFmpeg to create high-quality MP4
+            cmd = [
+                'ffmpeg', '-y',
+                '-framerate', str(fps),
+                '-i', os.path.join(temp_frames_dir, 'frame_%04d.png'),
+                '-c:v', 'libx264',
+                '-preset', 'veryslow',  # Highest quality encoding
+                '-crf', '17',           # High quality (0-51, lower is better)
+                '-pix_fmt', 'yuv420p',  # Ensure compatibility
+                '-movflags', '+faststart',  # Enable streaming
+                '-profile:v', 'high',    # High profile for better quality
+                '-tune', 'animation',    # Optimize for animation content
+                '-filter:v', 'fps=fps=' + str(fps),  # Ensure consistent framerate
+                output_path
+            ]
+            
+            subprocess.run(cmd, check=True)
+            logger.info(f"MP4 animation saved to {output_path}")
+            
+        finally:
+            # Clean up temporary files
+            import shutil
+            if os.path.exists(temp_frames_dir):
+                shutil.rmtree(temp_frames_dir)
+                
+    else:
+        # Save as GIF
+        imageio.mimsave(
+            output_path,
+            frames_list,
+            fps=fps,
+            optimize=True,
+            subrectangles=True
+        )
+        logger.info(f"GIF animation saved to {output_path}")
+
+def batch_process_images(
+    input_folder,
+    output_folder,
+    frames=60,
+    amplitude=35,
+    strength=0.7,
+    fps=60,
+    model_type="DPT_Large",
+    output_format="mp4",
+    output_width=None,
+    output_height=None
+):
+    """
+    Process all images in the input folder and create 3D parallax animations.
+    
+    Args:
+        output_format: Either 'gif' or 'mp4'. MP4 provides better quality.
+        output_width: Desired output width (optional)
+        output_height: Desired output height (optional)
+    """
+    os.makedirs(output_folder, exist_ok=True)
+    logger.info(f"Batch processing images to {output_format.upper()} format")
+    
+    # Load MiDaS model once for all images
+    logger.info("Loading MiDaS model...")
+    midas, transform = load_midas(model_type)
+    
+    image_extensions = ('.png', '.jpg', '.jpeg', '.webp')
+    image_files = [f for f in os.listdir(input_folder) 
+                  if f.lower().endswith(image_extensions)]
+    
+    if not image_files:
+        logger.warning(f"No image files found in {input_folder}")
+        return
+    
+    logger.info(f"Found {len(image_files)} images to process")
+    
+    for i, image_file in enumerate(image_files, 1):
+        input_path = os.path.join(input_folder, image_file)
+        output_filename = os.path.splitext(image_file)[0] + f'.{output_format}'
+        output_path = os.path.join(output_folder, output_filename)
+        
+        logger.info(f"Processing image {i}/{len(image_files)}: {image_file}")
+        
+        try:
+            generate_3d_parallax_animation(
+                input_image_path=input_path,
+                output_path=output_path,
+                frames=frames,
+                amplitude=amplitude,
+                strength=strength,
+                fps=fps,
+                model_type=model_type,
+                output_format=output_format,
+                output_width=output_width,
+                output_height=output_height
+            )
+            logger.info(f"Successfully processed {image_file}")
+            
+        except Exception as e:
+            logger.error(f"Error processing {image_file}: {str(e)}")
+            continue
+    
+    logger.info("Batch processing complete!")
 
 if __name__ == "__main__":
-    generate_3d_parallax_animation(
-        input_image_path="generated_images/generated_image_20250114_092616.png",
-        output_gif_path="parallax.gif",
-        frames=60,
-        amplitude=35,    # Reduced movement
-        strength=0.7,    # Increased strength for more pronounced separation
-        fps=30,
-        model_type="DPT_Large"
-    )
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Generate 3D parallax animations from images")
+    parser.add_argument("--input", required=True, help="Input image path or folder")
+    parser.add_argument("--output", required=True, help="Output animation path or folder")
+    parser.add_argument("--frames", type=int, default=60, help="Number of frames")
+    parser.add_argument("--amplitude", type=float, default=35, help="Movement amplitude")
+    parser.add_argument("--strength", type=float, default=0.7, help="3D effect strength")
+    parser.add_argument("--fps", type=int, default=60, help="Frames per second")
+    parser.add_argument("--model", default="DPT_Large", help="MiDaS model type")
+    parser.add_argument("--format", default="mp4", choices=['gif', 'mp4'], help="Output format (gif or mp4)")
+    parser.add_argument("--width", type=int, help="Output width (optional, default: same as input)")
+    parser.add_argument("--height", type=int, help="Output height (optional, default: same as input)")
+    
+    args = parser.parse_args()
+    
+    if os.path.isfile(args.input):
+        generate_3d_parallax_animation(
+            input_image_path=args.input,
+            output_path=args.output,
+            frames=args.frames,
+            amplitude=args.amplitude,
+            strength=args.strength,
+            fps=args.fps,
+            model_type=args.model,
+            output_format=args.format,
+            output_width=args.width,
+            output_height=args.height
+        )
+    else:
+        batch_process_images(
+            input_folder=args.input,
+            output_folder=args.output,
+            frames=args.frames,
+            amplitude=args.amplitude,
+            strength=args.strength,
+            fps=args.fps,
+            model_type=args.model,
+            output_format=args.format,
+            output_width=args.width,
+            output_height=args.height
+        )
