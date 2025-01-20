@@ -189,29 +189,41 @@ def create_video_from_images(
             f'scale=10*iw:10*ih,'
             f'setsar=1,'
             f"zoompan="
-            f"z='1+{zoom_params['range']}*sin({t_norm}*PI/2)':"  # Simplified zoom without pop
+            # Simple smooth zoom effect
+            f"z='1+{zoom_params['range']}*sin({t_norm}*PI/2)':"
             f"x='iw*{zoom_params['x_offset']}-(iw*{zoom_params['x_offset']}/zoom)':"
             f"y='ih*{zoom_params['y_offset']}-(ih*{zoom_params['y_offset']}/zoom)':"
             f"d={d_frames}:"
             f"s={output_width*3}x{output_height*3}:"
             f"fps={fps},"
-            f'scale={output_width}:{output_height}:flags=lanczos,'
-            # Enhanced transitions
-            f'fade=t=in:st=0:d=0.5:alpha=1,'
-            f'fade=t=out:st={frame_duration-0.5}:d=0.5:alpha=1,'
-            f'trim=duration={frame_duration},'
-            f'setpts=PTS-STARTPTS'
+            f'scale={output_width}:{output_height}:flags=lanczos'
             f'[v{i}];'
         )
         filter_chains.append(chain)
-        logger.debug(f"Generated pop transition chain for image {i+1}/{num_images}")
+        logger.debug(f"Generated transition chain for image {i+1}/{num_images}")
     
-    # Concatenate all labeled outputs and add subtitles
-    concat_part = ''.join(f'[v{i}]' for i in range(num_images))
-    filter_chains.append(
-        f'{concat_part}concat=n={num_images}:v=1:a=0[outv_raw];'
-        f'[outv_raw]ass={ass_subtitle_file}[outv]'
-    )
+    # Create crossfade transitions between consecutive videos
+    fade_duration = 2  # Duration of fade in seconds
+    fade_frames = int(fade_duration * fps)
+    
+    # Build the xfade chain differently
+    xfade_str = ""
+    temp_output = "v0"
+    
+    for i in range(num_images - 1):
+        next_output = f"v{i+1}out"
+        if i == num_images - 2:  # Last transition
+            next_output = "outv_raw"
+            
+        xfade_str += (
+            f"[{temp_output}][v{i+1}]xfade=transition=fade:"
+            f"duration={fade_duration}:offset={frame_duration-fade_duration}[{next_output}];"
+        )
+        temp_output = next_output
+    
+    # Add subtitles to the final output
+    xfade_str += f"[outv_raw]ass={ass_subtitle_file}[outv]"
+    filter_chains.append(xfade_str)
     
     filter_complex_str = ''.join(filter_chains)
     audio_input_index = num_images
